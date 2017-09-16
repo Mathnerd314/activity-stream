@@ -4,14 +4,18 @@ const {UPDATE_TIME} = require("lib/TopSitesFeed.jsm");
 const {FakePrefs, GlobalOverrider} = require("test/unit/utils");
 const action = {meta: {fromTarget: {}}};
 const {actionCreators: ac, actionTypes: at} = require("common/Actions.jsm");
-const {insertPinned, TOP_SITES_SHOWMORE_LENGTH} = require("common/Reducers.jsm");
+const {insertPinned, TOP_SITES_DEFAULT_LENGTH, TOP_SITES_SHOWMORE_LENGTH} = require("common/Reducers.jsm");
 
 const FAKE_FRECENCY = 200;
-const FAKE_LINKS = new Array(TOP_SITES_SHOWMORE_LENGTH).fill(null).map((v, i) => ({
+const FAKE_LINKS = new Array(100).fill(null).map((v, i) => ({
   frecency: FAKE_FRECENCY,
   url: `http://www.site${i}.com`
 }));
 const FAKE_SCREENSHOT = "data123";
+const FAKE_PREFS = {
+  "default.sites": "https://foo.com",
+  "topSitesCount": TOP_SITES_SHOWMORE_LENGTH
+};
 
 function FakeTippyTopProvider() {}
 FakeTippyTopProvider.prototype = {
@@ -54,6 +58,7 @@ describe("Top Sites Feed", () => {
     const fakeDedupe = function() {};
     globals.set("NewTabUtils", fakeNewTabUtils);
     FakePrefs.prototype.prefs["default.sites"] = "https://foo.com/";
+    FakePrefs.prototype.prefs["topSitesCount"] = TOP_SITES_SHOWMORE_LENGTH;
     ({TopSitesFeed, DEFAULT_TOP_SITES} = injector({
       "lib/ActivityStreamPrefs.jsm": {Prefs: FakePrefs},
       "common/Dedupe.jsm": {Dedupe: fakeDedupe},
@@ -83,7 +88,7 @@ describe("Top Sites Feed", () => {
 
   describe("#refreshDefaults", () => {
     it("should add defaults on PREFS_INITIAL_VALUES", () => {
-      feed.onAction({type: at.PREFS_INITIAL_VALUES, data: {"default.sites": "https://foo.com"}});
+      feed.onAction({type: at.PREFS_INITIAL_VALUES, data: FAKE_PREFS});
 
       assert.isAbove(DEFAULT_TOP_SITES.length, 0);
     });
@@ -191,19 +196,25 @@ describe("Top Sites Feed", () => {
       links = [{frecency: FAKE_FRECENCY, url: "foo.com"}];
 
       const result = await feed.getLinksWithDefaults();
-      const reference = [...links, ...DEFAULT_TOP_SITES].map(s => Object.assign({}, s, {hostname: shortURLStub(s)}));
+      const reference = [...links, ...DEFAULT_TOP_SITES].slice(0,TOP_SITES_DEFAULT_LENGTH).map(s => Object.assign({}, s, {hostname: shortURLStub(s)}));
 
       assert.deepEqual(result, reference);
     });
-    it("should only add defaults up to TOP_SITES_SHOWMORE_LENGTH", async () => {
-      links = [];
-      for (let i = 0; i < TOP_SITES_SHOWMORE_LENGTH - 1; i++) {
-        links.push({frecency: FAKE_FRECENCY, url: `foo${i}.com`});
-      }
+    it("should only add defaults up to topSitesCount", async () => {
+      feed.topSitesCount = TOP_SITES_SHOWMORE_LENGTH;
+      links = FAKE_LINKS.slice(0, TOP_SITES_SHOWMORE_LENGTH - 1);
       const result = await feed.getLinksWithDefaults();
       const reference = [...links, DEFAULT_TOP_SITES[0]].map(s => Object.assign({}, s, {hostname: shortURLStub(s)}));
 
       assert.lengthOf(result, TOP_SITES_SHOWMORE_LENGTH);
+      assert.deepEqual(result, reference);
+    });
+    it("should return topSitesCount sites", async () => {
+      feed.topSitesCount = 50;
+      const result = await feed.getLinksWithDefaults();
+      const reference = FAKE_LINKS.slice(0,50).map(s => Object.assign({}, s, {hostname: shortURLStub(s)}));
+
+      assert.lengthOf(result, 50);
       assert.deepEqual(result, reference);
     });
     it("should not throw if NewTabUtils returns null", () => {
@@ -304,6 +315,16 @@ describe("Top Sites Feed", () => {
       fakeNewTabUtils.pinnedLinks.links = [null, null, FAKE_LINKS[1], null, null, null, null, null, FAKE_LINKS[2]];
       sandbox.stub(feed, "getScreenshot");
       await feed.refresh(action);
+      assert.calledOnce(feed.store.dispatch);
+    });
+    it("should set topSitesCount from PREFS_INITIAL_VALUES", () => {
+      feed.onAction({type: at.PREFS_INITIAL_VALUES, data: FAKE_PREFS});
+
+      assert.equal(feed.topSitesCount, TOP_SITES_SHOWMORE_LENGTH);
+    });
+    it("should set topSitesCount and refresh on PREF_CHANGED", () => {
+      feed.onAction({type: at.PREF_CHANGED, data: {name: "topSitesCount", value: 20}});
+      assert.equal(feed.topSitesCount, 20);
       assert.calledOnce(feed.store.dispatch);
     });
   });

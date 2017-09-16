@@ -8,7 +8,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 const {actionCreators: ac, actionTypes: at} = Cu.import("resource://activity-stream/common/Actions.jsm", {});
 const {TippyTopProvider} = Cu.import("resource://activity-stream/lib/TippyTopProvider.jsm", {});
-const {insertPinned, TOP_SITES_SHOWMORE_LENGTH} = Cu.import("resource://activity-stream/common/Reducers.jsm", {});
+const {insertPinned, TOP_SITES_DEFAULT_LENGTH, TOP_SITES_SHOWMORE_LENGTH} = Cu.import("resource://activity-stream/common/Reducers.jsm", {});
 const {Dedupe} = Cu.import("resource://activity-stream/common/Dedupe.jsm", {});
 const {shortURL} = Cu.import("resource://activity-stream/lib/ShortURL.jsm", {});
 
@@ -28,6 +28,7 @@ const MIN_FAVICON_SIZE = 96;
 this.TopSitesFeed = class TopSitesFeed {
   constructor() {
     this.lastUpdated = 0;
+    this.topSitesCount = TOP_SITES_DEFAULT_LENGTH;
     this._tippyTopProvider = new TippyTopProvider();
     this.dedupe = new Dedupe(this._dedupeKey);
   }
@@ -56,7 +57,9 @@ this.TopSitesFeed = class TopSitesFeed {
     this.store.dispatch(ac.BroadcastToContent(action));
   }
   async getLinksWithDefaults(action) {
-    let frecent = await NewTabUtils.activityStreamLinks.getTopSites();
+    let frecent = await NewTabUtils.activityStreamLinks.getTopSites({
+      numItems: this.topSitesCount
+    });
     const notBlockedDefaultSites = DEFAULT_TOP_SITES.filter(site => !NewTabUtils.blockedLinks.isBlocked({url: site.url}));
     const defaultUrls = notBlockedDefaultSites.map(site => site.url);
     let pinned = this._getPinnedWithData(frecent);
@@ -86,7 +89,7 @@ this.TopSitesFeed = class TopSitesFeed {
       filterAdult(dedupedUnpinned) : dedupedUnpinned;
 
     // Insert the original pinned sites into the deduped frecent and defaults
-    return insertPinned(checkedAdult, pinned).slice(0, TOP_SITES_SHOWMORE_LENGTH);
+    return insertPinned(checkedAdult, pinned).slice(0, this.topSitesCount);
   }
   async refresh(target = null) {
     if (!this._tippyTopProvider.initialized) {
@@ -209,9 +212,14 @@ this.TopSitesFeed = class TopSitesFeed {
         if (action.data.name === DEFAULT_SITES_PREF) {
           this.refreshDefaults(action.data.value);
         }
+        if (action.data.name === "topSitesCount") {
+          this.topSitesCount = action.data.value;
+          this.refresh();
+        }
         break;
       case at.PREFS_INITIAL_VALUES:
         this.refreshDefaults(action.data[DEFAULT_SITES_PREF]);
+        this.topSitesCount = action.data["topSitesCount"];
         break;
       case at.TOP_SITES_PIN:
         this.pin(action);
